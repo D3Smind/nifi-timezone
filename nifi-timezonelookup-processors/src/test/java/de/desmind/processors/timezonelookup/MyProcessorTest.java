@@ -16,10 +16,19 @@
  */
 package de.desmind.processors.timezonelookup;
 
+import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class MyProcessorTest {
 
@@ -32,7 +41,26 @@ public class MyProcessorTest {
 
     @Test
     public void testProcessor() {
+        testRunner.setProperty("latitude attribute", "lat");
+        testRunner.setProperty("longitude attribute", "lon");
+        testRunner.setProperty("timestamps to convert", "ts");
+        Map<String, String> properties = new HashMap<>();
+        properties.put("lat", "53.45");
+        properties.put("lon", "9.98");
+        properties.put("ts", "2023-09-13T08:01:32Z");
+        testRunner.enqueue("", properties);
+        testRunner.run(1);
 
+        testRunner.assertQueueEmpty();
+        List<MockFlowFile> results = testRunner.getFlowFilesForRelationship(TimeZoneLookup.REL_SUCCESS);
+        List<MockFlowFile> results_fail = testRunner.getFlowFilesForRelationship(TimeZoneLookup.REL_FAILURE);
+        if (!results_fail.isEmpty()){
+            MockFlowFile resultingFF = results_fail.get(0);
+            System.out.println(resultingFF.getAttribute("Fail"));
+        }
+        assertEquals(1, results.size());
+        MockFlowFile resultingFF = results.get(0);
+        assertEquals("Europe/Berlin", resultingFF.getAttribute("possible_zone"));
     }
 
 }

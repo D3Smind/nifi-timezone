@@ -37,16 +37,9 @@ import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.util.StandardValidators;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
@@ -57,9 +50,9 @@ public class TimeZoneLookup extends AbstractProcessor {
 
 
     public static final PropertyDescriptor PROP_CONVERT_TIMESTAMPS = new PropertyDescriptor
-            .Builder().name("Timestamps to Convert")
+            .Builder().name("timestamps to convert")
             .description("names of attributes that contain nifi-std formatted timestamps. list is comma seperated.")
-            .required(false)
+            .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
@@ -133,7 +126,13 @@ public class TimeZoneLookup extends AbstractProcessor {
 
         String latitudeAttr = context.getProperty(PROP_ATTR_LATITUDE).getValue();
         String longitudeAttr = context.getProperty(PROP_ATTR_LONGITUDE).getValue();
-        String[] tsAttributesToConvert = context.getProperty(PROP_CONVERT_TIMESTAMPS).getValue().split(",");
+
+        String[] tsAttributesToConvert;
+        if (!Objects.equals(context.getProperty(PROP_CONVERT_TIMESTAMPS).getValue(), "_")){
+             tsAttributesToConvert = context.getProperty(PROP_CONVERT_TIMESTAMPS).getValue().split(",");
+        } else {
+            tsAttributesToConvert = new String[]{};
+        }
 
 
         double latitude;
@@ -150,15 +149,16 @@ public class TimeZoneLookup extends AbstractProcessor {
         List<ZoneId> zoneIdList = timeZoneEngine.queryAll(latitude, longitude);
 
         if(!zoneIdList.isEmpty()) {
+            session.putAttribute(flowFile, "possible_zone", zoneIdList.get(0).getId());
             for (String tsAttribute :
                     tsAttributesToConvert) {
 
                 LocalDateTime localDate;
 
                 try {
-                    localDate = LocalDateTime.parse(context.getProperty(tsAttribute).getValue(), DateTimeFormatter.ISO_INSTANT);
+                    localDate = LocalDateTime.parse(flowFile.getAttribute(tsAttribute), DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss'Z'"));
                 } catch (Exception e) {
-                    session.putAttribute(flowFile, "Fail", "property " + tsAttribute + " cannot be parsed");
+                    session.putAttribute(flowFile, "Fail", e.getMessage());
                     session.transfer(flowFile, REL_FAILURE);
                     return;
                 }
@@ -167,19 +167,22 @@ public class TimeZoneLookup extends AbstractProcessor {
                 int maxTsOffset = -432001;
 
                 for(ZoneId zoneId: zoneIdList){
-                    int offset = zoneId.getRules().getOffset(localDate).getTotalSeconds();
-                    if(offset < minTsOffset){
-                        minTsOffset = offset;
+                    for (ZoneOffset zoneOffset :zoneId.getRules().getValidOffsets(localDate)){
+                        int offset = zoneOffset.getTotalSeconds();
+                        if(offset < minTsOffset){
+                            minTsOffset = offset;
+                        }
+                        if(offset > maxTsOffset){
+                            maxTsOffset = offset;
+                        }
                     }
-                    if(offset > maxTsOffset){
-                        maxTsOffset = offset;
-                    }
+
                 }
 
                 int tzOffsetMiddle = Math.round((float) (minTsOffset + maxTsOffset) /2);
                 int tzDelta = maxTsOffset - tzOffsetMiddle;
 
-                session.putAttribute(flowFile, tsAttribute+".localized.median", localDate.plusSeconds(tzOffsetMiddle).format(DateTimeFormatter.ISO_INSTANT));
+                session.putAttribute(flowFile, tsAttribute+".localized.median", localDate.plusSeconds(tzOffsetMiddle).format(DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss'Z'")));
                 session.putAttribute(flowFile, tsAttribute+".localized.delta", String.format("%d Seconds", tzDelta));
             }
         }
